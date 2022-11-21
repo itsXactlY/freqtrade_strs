@@ -1,12 +1,8 @@
-from typing import Dict, List
-
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 import numpy as np
 import talib.abstract as ta
 import pandas_ta as pta
 import pandas as pd
-
-from skopt.space import Dimension, Integer
 
 from freqtrade.persistence import Trade
 from freqtrade.strategy.interface import IStrategy
@@ -141,10 +137,6 @@ class BBMod(IStrategy):
     # Custom stoploss
     use_custom_stoploss = True
 
-    # Buy params
-    leverage_optimize = False
-    leverage_num = IntParameter(low=1, high=3, default=3, space='buy', optimize=leverage_optimize)
-
     buy_con_op = True
     buy_is_bb_checked_enable = CategoricalParameter([True, False], default=True, space='buy', optimize=buy_con_op)
     buy_is_sqzmom_enable = CategoricalParameter([True, False], default=True, space='buy', optimize=buy_con_op)
@@ -178,9 +170,6 @@ class BBMod(IStrategy):
     buy_ema_diff = DecimalParameter(0.022, 0.027, default=0.025, space='buy', optimize=is_optimize_local_uptrend)
     buy_bb_factor = DecimalParameter(0.990, 0.999, default=0.995, space='buy', optimize=is_optimize_local_uptrend)
     buy_closedelta = DecimalParameter(12.0, 18.0, default=15.0, space='buy', optimize=is_optimize_local_uptrend)
-
-    is_optimize_local_uptrend2 = True
-    buy_bb_factor2 = DecimalParameter(0.990, 0.999, default=0.995, space='buy', optimize=is_optimize_local_uptrend2)
 
     is_optimize_local_dip = True
     buy_ema_diff_local_dip = DecimalParameter(0.022, 0.027, default=0.025, space='buy', optimize=is_optimize_local_dip)
@@ -220,6 +209,8 @@ class BBMod(IStrategy):
     buy_r_deadfish_r14 = DecimalParameter(-60, -44, default=-60, space='buy', optimize=is_optimize_r_deadfish)
 
     is_optimize_cofi = True
+    buy_roc_1h = IntParameter(-25, 200, default=10, space='buy', optimize=is_optimize_cofi)
+    buy_bb_width_1h = DecimalParameter(0.3, 2.0, default=0.3, space='buy', optimize=is_optimize_cofi)
     buy_ema_cofi = DecimalParameter(0.94, 1.2, default=0.97, space='buy', optimize=is_optimize_cofi)
     buy_fastk = IntParameter(0, 40, default=20, space='buy', optimize=is_optimize_cofi)
     buy_fastd = IntParameter(0, 40, default=20, space='buy', optimize=is_optimize_cofi)
@@ -241,34 +232,26 @@ class BBMod(IStrategy):
     buy_gumbo_cti = DecimalParameter(-0.9, -0.0, default=-0.5, space='buy', optimize=is_optimize_gumbo)
     buy_gumbo_r14 = DecimalParameter(-100, -44, default=-60, space='buy', optimize=is_optimize_gumbo)
 
+    is_optimize_32 = True
+    buy_rsi_fast_32 = IntParameter(20, 70, default=46, space='buy', optimize=is_optimize_32)
+    buy_rsi_32 = IntParameter(15, 50, default=19, space='buy', optimize=is_optimize_32)
+    buy_sma15_32 = DecimalParameter(0.900, 1, default=0.942, decimals=3, space='buy', optimize=is_optimize_32)
+    buy_cti_32 = DecimalParameter(-1, 0, default=-0.86, decimals=2, space='buy', optimize=is_optimize_32)
+
+    is_optimize_vwap = True
+    tpc = IntParameter(1, 20, default=4, space='buy', optimize=is_optimize_vwap)
+    buy_vwap_cti = DecimalParameter(-1, 0, default=-0.86, decimals=2, space='buy', optimize=is_optimize_vwap)
+    buy_vwap_rsi = IntParameter(15, 35, default=35, space='buy', optimize=is_optimize_vwap)
+
     # custom stoploss
     trailing_optimize = True
     pHSL = DecimalParameter(-0.990, -0.040, default=-0.1, decimals=3, space='sell', optimize=False)
-    pPF_1 = DecimalParameter(0.008, 0.100, default=0.03, decimals=3, space='sell', optimize=False)
-    pSL_1 = DecimalParameter(0.02, 0.030, default=0.025, decimals=3, space='sell', optimize=trailing_optimize)
-    pPF_2 = DecimalParameter(0.040, 0.200, default=0.080, decimals=3, space='sell', optimize=False)
-    pSL_2 = DecimalParameter(0.070, 0.080, default=0.075, decimals=3, space='sell', optimize=trailing_optimize)
+    pPF_1 = DecimalParameter(0.008, 0.030, default=0.03, decimals=3, space='sell', optimize=True)
+    pSL_1 = DecimalParameter(0.008, 0.030, default=0.03, decimals=3, space='sell', optimize=trailing_optimize)
+    pPF_2 = DecimalParameter(0.040, 0.080, default=0.080, decimals=3, space='sell', optimize=True)
+    pSL_2 = DecimalParameter(0.040, 0.080, default=0.080, decimals=3, space='sell', optimize=trailing_optimize)
 
-    ############################################################################
-    class HyperOpt:
-        @staticmethod
-        def generate_roi_table(params: Dict) -> Dict[int, float]:
-            roi_table = {params['roi_t1']: 0}
-            return roi_table
-
-        @staticmethod
-        def roi_space() -> List[Dimension]:
-            roi_min_time = 10
-            roi_max_time = 360
-
-            roi_limits = {
-                'roi_t1_min': int(roi_min_time),
-                'roi_t1_max': int(roi_max_time)
-            }
-
-            return [
-                Integer(roi_limits['roi_t1_min'], roi_limits['roi_t1_max'], name='roi_t1')
-            ]
+    sell_fastx = IntParameter(50, 100, default=75, space='sell', optimize=True)
 
     def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, **kwargs) -> float:
@@ -309,11 +292,14 @@ class BBMod(IStrategy):
         dataframe['ha_close'] = heikinashi['close']
         dataframe['rocr'] = ta.ROCR(dataframe['ha_close'], timeperiod=28)
 
+        dataframe['roc'] = ta.ROC(dataframe, timeperiod=9)
+
         # # Bollinger bands
         bollinger2 = qtpylib.bollinger_bands(qtpylib.typical_price(dataframe), window=20, stds=2)
         dataframe['bb_lowerband2'] = bollinger2['lower']
         dataframe['bb_middleband2'] = bollinger2['mid']
         dataframe['bb_upperband2'] = bollinger2['upper']
+        dataframe['bb_width'] = ((dataframe['bb_upperband2'] - dataframe['bb_lowerband2']) / dataframe['bb_middleband2'])
 
         dataframe['T3'] = T3(dataframe)
 
@@ -366,8 +352,6 @@ class BBMod(IStrategy):
         dataframe['rsi'] = ta.RSI(dataframe, timeperiod=14)
         dataframe['rsi_fast'] = ta.RSI(dataframe, timeperiod=4)
         dataframe['rsi_slow'] = ta.RSI(dataframe, timeperiod=20)
-        dataframe['rsi_84'] = ta.RSI(dataframe, timeperiod=84)
-        dataframe['rsi_112'] = ta.RSI(dataframe, timeperiod=112)
 
         # Elliot
         dataframe['EWO'] = ewo(dataframe, 50, 200)
@@ -395,7 +379,9 @@ class BBMod(IStrategy):
         # vmap indicators
         vwap_low, vwap, vwap_high = vwap_b(dataframe, 20, 1)
         dataframe['vwap_low'] = vwap_low
-        dataframe['tcp_percent_4'] = top_percent_change(dataframe, 4)
+
+        for val in self.tpc.range:
+            dataframe[f'tcp_percent_{val}'] = top_percent_change(dataframe, val)
 
         for val in self.buy_cci_length.range:
             dataframe[f'cci_length_{val}'] = ta.CCI(dataframe, val)
@@ -502,6 +488,8 @@ class BBMod(IStrategy):
 
         is_cofi = (
                 self.buy_is_cofi_enable.value &
+                (dataframe['roc_1h'] < self.buy_roc_1h.value) &
+                (dataframe['bb_width_1h'] < self.buy_bb_width_1h.value) &
                 (dataframe['open'] < dataframe['ema_8'] * self.buy_ema_cofi.value) &
                 (qtpylib.crossed_above(dataframe['fastk'], dataframe['fastd'])) &
                 (dataframe['fastk'] < self.buy_fastk.value) &
@@ -521,22 +509,13 @@ class BBMod(IStrategy):
                 (dataframe['r_14'] < self.buy_gumbo_r14.value)
         )
 
-        is_local_uptrend = (  # from NFI next gen, credit goes to @iterativ
+        is_local_uptrend = (
                 self.buy_is_local_uptrend_enable.value &
                 (dataframe['ema_26'] > dataframe['ema_12']) &
                 (dataframe['ema_26'] - dataframe['ema_12'] > dataframe['open'] * self.buy_ema_diff.value) &
                 (dataframe['ema_26'].shift() - dataframe['ema_12'].shift() > dataframe['open'] / 100) &
                 (dataframe['close'] < dataframe['bb_lowerband2'] * self.buy_bb_factor.value) &
                 (dataframe['closedelta'] > dataframe['close'] * self.buy_closedelta.value / 1000)
-        )
-
-        is_local_uptrend2 = (  # use origin bb_rpb_tsl value
-                self.buy_is_local_uptrend2_enable.value &
-                (dataframe['ema_26'] > dataframe['ema_12']) &
-                (dataframe['ema_26'] - dataframe['ema_12'] > dataframe['open'] * 0.026) &
-                (dataframe['ema_26'].shift() - dataframe['ema_12'].shift() > dataframe['open'] / 100) &
-                (dataframe['close'] < dataframe['bb_lowerband2'] * self.buy_bb_factor2.value) &
-                (dataframe['closedelta'] > dataframe['close'] * 17.922 / 1000)
         )
 
         is_local_dip = (
@@ -562,34 +541,18 @@ class BBMod(IStrategy):
         is_nfi_32 = (
                 self.buy_is_nfi_32_enable.value &
                 (dataframe['rsi_slow'] < dataframe['rsi_slow'].shift(1)) &
-                (dataframe['rsi_fast'] < 46) &
-                (dataframe['rsi'] > 19) &
-                (dataframe['close'] < dataframe['sma_15'] * 0.942) &
-                (dataframe['cti'] < -0.86)
-        )
-
-        is_nfix_39 = (
-                self.buy_is_nfix_39_enable.value &
-                (dataframe['ema_200_1h'] > dataframe['ema_200_1h'].shift(12)) &
-                (dataframe['ema_200_1h'].shift(12) > dataframe['ema_200_1h'].shift(24)) &
-                (dataframe['bb_lowerband2_40'].shift().gt(0)) &
-                (dataframe['bb_delta_cluc'].gt(dataframe['close'] * 0.056)) &
-                (dataframe['closedelta'].gt(dataframe['close'] * 0.01)) &
-                (dataframe['tail'].lt(dataframe['bb_delta_cluc'] * 0.5)) &
-                (dataframe['close'].lt(dataframe['bb_lowerband2_40'].shift())) &
-                (dataframe['close'].le(dataframe['close'].shift())) &
-                (dataframe['close'] > dataframe['ema_13'] * self.buy_nfix_39_ema.value)
+                (dataframe['rsi_fast'] < self.buy_rsi_fast_32.value) &
+                (dataframe['rsi'] > self.buy_rsi_32.value) &
+                (dataframe['close'] < dataframe['sma_15'] * self.buy_sma15_32.value) &
+                (dataframe['cti'] < self.buy_cti_32.value)
         )
 
         is_vwap = (
                 self.buy_is_vwap_enable.value &
                 (dataframe['close'] < dataframe['vwap_low']) &
-                (dataframe['tcp_percent_4'] > 0.04) &
-                (dataframe['cti'] < -0.8) &
-                (dataframe['rsi'] < 35) &
-                (dataframe['rsi_84'] < 60) &
-                (dataframe['rsi_112'] < 60) &
-                (dataframe['volume'] > 0)
+                (dataframe[f'tcp_percent_{self.tpc.value}'] > self.tpc.value) &
+                (dataframe['cti'] < self.buy_vwap_cti.value) &
+                (dataframe['rsi'] < self.buy_vwap_rsi.value)
         )
 
         conditions.append(is_bb_checked)
@@ -625,14 +588,8 @@ class BBMod(IStrategy):
         conditions.append(is_nfi_32)
         dataframe.loc[is_nfi_32, 'enter_tag'] += 'nfi_32 '
 
-        conditions.append(is_nfix_39)
-        dataframe.loc[is_nfix_39, 'enter_tag'] += 'nfix_39 '
-
         conditions.append(is_vwap)
         dataframe.loc[is_vwap, 'enter_tag'] += 'vwap '
-
-        conditions.append(is_local_uptrend2)
-        dataframe.loc[is_local_uptrend2, 'enter_tag'] += 'local_uptrend2 '
 
         if conditions:
             dataframe.loc[
@@ -642,11 +599,19 @@ class BBMod(IStrategy):
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe.loc[(), ['exit_long', 'exit_tag']] = (0, 'long_out')
+        conditions = []
+        dataframe.loc[:, 'exit_tag'] = ''
+
+        fastk_cross = (
+            (qtpylib.crossed_above(dataframe['fastk'], self.sell_fastx.value))
+        )
+
+        conditions.append(fastk_cross)
+        dataframe.loc[fastk_cross, 'exit_tag'] += 'fastk_cross '
+
+        if conditions:
+            dataframe.loc[
+                reduce(lambda x, y: x | y, conditions),
+                'exit_long'] = 1
+
         return dataframe
-
-    def leverage(self, pair: str, current_time: datetime, current_rate: float,
-                 proposed_leverage: float, max_leverage: float, side: str,
-                 **kwargs) -> float:
-
-        return self.leverage_num.value
